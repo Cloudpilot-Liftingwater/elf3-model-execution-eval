@@ -1,0 +1,41 @@
+def step(
+        self,
+        frame: InferenceFrame,
+        dt: float,
+        *,
+        advance: bool = True,
+    ) -> PolicyOutput:
+        del dt
+        if not advance:
+            np.copyto(self._action_checkpoint, self._action)
+        joints = self.bind_joints(frame)
+        command = frame.command
+        if command is None:
+            raise ValueError("NormalMotionPolicyMjlab requires frame.command")
+        obs = self._obs[0]
+        obs[0:3] = frame.angular_velocity
+        self._project_gravity(frame.quat_wxyz, self._gravity)
+        obs[3:6] = self._gravity
+        np.subtract(
+            joints.position,
+            self._parameters.default_position,
+            out=obs[6:35],
+        )
+        obs[35:64] = joints.velocity
+        obs[64:93] = self._action
+        obs[93:96] = command
+        outputs = self._backend.run(self._inputs)
+        np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
+        np.multiply(
+            self._action,
+            self._parameters.action_scale,
+            out=self._scaled_action,
+        )
+        np.add(
+            self._parameters.default_position,
+            self._scaled_action,
+            out=self._target,
+        )
+        if not advance:
+            np.copyto(self._action, self._action_checkpoint)
+        return self.output

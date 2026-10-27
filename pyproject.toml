@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elf3-model-execution-eval"
+version = "0.1.0"
+description = "Passive, model-neutral ELF3 29-joint execution evaluator"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23,<3"]
+
+[project.optional-dependencies]
+validation = ["onnxruntime>=1.16,<2"]
+
+[project.scripts]
+elf3-eval = "elf3_eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+elf3_eval = ["body29.json", "report_template.html"]

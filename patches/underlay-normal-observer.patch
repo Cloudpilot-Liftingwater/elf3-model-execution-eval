@@ -1,0 +1,116 @@
+--- a/bxi_example_py_elf3/policies/normal.py
++++ b/bxi_example_py_elf3/policies/normal.py
+@@ -2,7 +2,14 @@
+ 
+ from __future__ import annotations
+ 
++# Optional observation only; failure must never alter control flow.
++try:
++    from elf3_eval import host as _execution_eval
++except Exception:
++    _execution_eval = None
++
+ import ast
++import time
+ 
+ import numpy as np
+ 
+@@ -47,7 +54,12 @@
+             )
+         )
+         self._backend = self._runtime.open_backend(spec, backend=backend)
+-
++        if _execution_eval is not None:
++            try:
++                _execution_eval.register_normal(self, model)
++    
++            except Exception:
++                pass  # observation only
+         metadata = dict(self._backend.metadata)
+         raw_names = metadata.get("joint_names")
+         if not raw_names:
+@@ -123,6 +135,7 @@
+         obs[35:64] = joints.velocity
+         obs[64:93] = self._action
+         obs[93:96] = command
++        _eval_started = time.monotonic()
+         outputs = self._backend.run(self._inputs)
+         np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
+         np.multiply(
+@@ -137,6 +150,11 @@
+         )
+         if not advance:
+             np.copyto(self._action, self._action_checkpoint)
++        if _execution_eval is not None:
++            try:
++                _execution_eval.normal_output(self, _eval_started, advance)
++            except Exception:
++                pass  # observation only
+         return self.output
+ 
+     @staticmethod
+--- a/bxi_example_py_elf3/framework/runtime/controller.py
++++ b/bxi_example_py_elf3/framework/runtime/controller.py
+@@ -1,6 +1,12 @@
+ """Control framework driven by a thin platform adapter."""
+ 
+ from __future__ import annotations
++
++# Optional observation only; failure must never alter control flow.
++try:
++    from elf3_eval import host as _execution_eval
++except Exception:
++    _execution_eval = None
+ 
+ from collections.abc import Mapping, Sequence
+ import math
+@@ -239,7 +245,18 @@
+         self.current_cmd_vel.fill(0.0)
+         self._motor_target = None
+ 
++        if _execution_eval is not None:
++            try:
++                _execution_eval.begin_cycle()
++                _execution_eval.set_transition(self.state_machine.in_transition)
++            except Exception:
++                pass  # observation only
+         transition_active = self.state_machine.update(self.dt, events)
++        if _execution_eval is not None:
++            try:
++                _execution_eval.set_transition(transition_active)
++            except Exception:
++                pass  # observation only
+         if not transition_active:
+             self.state_machine.update_current_state(self.dt)
+ 
+--- a/bxi_example_py_elf3/bxi_example_demo.py
++++ b/bxi_example_py_elf3/bxi_example_demo.py
+@@ -18,6 +18,12 @@
+ import numpy as np
+ 
+ import time
++
++# Optional observation only; failure must never alter control flow.
++try:
++    from elf3_eval import host as _execution_eval
++except Exception:
++    _execution_eval = None
+ import os
+ import json
+ from collections import deque
+@@ -370,7 +376,14 @@
+         msg.kp = frame.kp.tolist()
+         msg.kd = frame.kd.tolist()
+         self.act_pub.publish(msg)
+-
++        if _execution_eval is not None:
++            try:
++                _execution_eval.command_published(
++                    msg, state_name, self.runtime.framework.state_machine.in_transition
++                )
++    
++            except Exception:
++                pass  # observation only
+     def publish_state_machine_info(self):
+         info = self.runtime.snapshot(include_graph=True)
+         if info is None:
