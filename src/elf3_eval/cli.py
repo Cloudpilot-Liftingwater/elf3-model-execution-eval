@@ -16,6 +16,7 @@ def main(argv=None):
     x.add_argument('--lag-max-ms',type=float,default=250.);x.add_argument('--lag-step-ms',type=float,default=5.)
     x.add_argument('--include-phases',default='active');x.add_argument('--model')
     x.add_argument('--start',type=float);x.add_argument('--end',type=float)
+    x.add_argument('--sonic-reference',metavar='BUNDLE_DIR',help='optional offline g1_kin bundle: kinematic_manifest.json and g1_kin_step28800.onnx')
     x=sub.add_parser('record',help='passive ROS/socket subscriptions, no control publication')
     x.add_argument('--output',required=True);x.add_argument('--seconds',type=float,default=60.)
     x.add_argument('--address',default='elf3_model_eval_v1');x.add_argument('--socket-only',action='store_true')

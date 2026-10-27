@@ -105,7 +105,7 @@ def import_recording(source, output, *, source_age_max=1., clock_jump=.02):
                     e = {'kind':'barrier','t':previous_rx,'reason':'invalid_event','source_line':number}
                     db.execute('INSERT INTO events(epoch,kind,t,data) VALUES(?,?,?,?)',
                                (epoch,'barrier',previous_rx,zlib.compress(json.dumps(e).encode())))
-    meta = dict(schema=1, source=str(source), decompressed_sha256=digest.hexdigest(),
+    meta = dict(schema=1, sonic_trace_fields_version=1, source=str(source), decompressed_sha256=digest.hexdigest(),
                 source_bytes=source.stat().st_size, counts=dict(counts), clock_epochs=epoch+1,
                 producer_cumulative_counters=tap_counters,
                 import_options=dict(source_age_max_s=source_age_max, clock_jump_s=clock_jump),

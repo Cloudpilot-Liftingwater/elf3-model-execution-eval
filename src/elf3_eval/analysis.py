@@ -20,6 +20,7 @@ class Options:
     model: str | None = None
     start: float | None = None
     end: float | None = None
+    sonic_reference: str | None = None
 
 def timing(rows):
     t = np.array([r['t'] for r in rows if r.get('time_valid',True)])
@@ -93,6 +94,10 @@ def analyze(database, output, options=None):
         raise ValueError('time selection must be finite')
     if options.start is not None and options.end is not None and options.end<=options.start:
         raise ValueError('end must be after start')
+    reference=None
+    if options.sonic_reference is not None:
+        from .sonic_reference import SonicReference
+        reference=SonicReference(options.sonic_reference)
     out.mkdir(parents=True,exist_ok=True)
     db=open_db(database,readonly=True)
     source=json.loads(db.execute("SELECT value FROM metadata WHERE key='import'").fetchone()[0])
@@ -100,6 +105,7 @@ def analyze(database, output, options=None):
         measurement='Actuator encoder execution following, not independent spatial accuracy',
         accuracy_acceptance='not_assessed_no_user_threshold',options=asdict(options),source=source,segments=[])
     charts=[]; arrays={}; total_reasons=Counter(); total_feedback=0; total_model_frames=0; total_command_frames=0
+    total_reference_frames=0; total_reference_inputs=0; reference_reasons=Counter()
     for epoch, in db.execute('SELECT DISTINCT epoch FROM events ORDER BY epoch'):
         events=list(load_epoch(db,epoch))
         links={e['source_stamp_ns']:e for e in events if e['kind']=='command_link'}
@@ -130,12 +136,16 @@ def analyze(database, output, options=None):
                     (options.start is None or e['t']>=options.start) and
                     (options.end is None or e['t']<=options.end)]
             if not states: continue
+            reference_info=reference.attach(models) if reference else None
             commands=[e for e in block if e['kind']=='command']
             usable_models=[e for e in models if e.get('time_valid',True)]
             usable_commands=[e for e in commands if e.get('time_valid',True)]
             t=np.array([e['t'] for e in states]); n=len(t); total_feedback+=n
             q_actual=np.stack([vector(e['q'],e['names']) for e in states])
             q_command=np.full((n,29),np.nan); q_model=q_command.copy(); kp=q_command.copy()
+            if reference:
+                q_ref=q_command.copy(); reference_age=np.full(n,np.nan)
+                reference_reason=np.full(n,'model_not_associated',dtype='<U48')
             cmd_age=np.full(n,np.nan); model_age=cmd_age.copy()
             enabled=np.zeros((n,29),bool); phase=np.full(n,'unknown',dtype='<U32')
             model_ok=np.zeros(n,bool); command_ok=np.zeros(n,bool)
@@ -176,6 +186,9 @@ def analyze(database, output, options=None):
                 if c.get('model_id') is not None and c['model_id']!=m['model_id']:
                     reasons['model_identity_mismatch']+=1;continue
                 q_model[i]=mapped_m[mix]
+                if reference:
+                    q_ref[i]=m['_q_ref']; reference_reason[i]=m['_reference_reason']
+                    reference_age[i]=t[i]-m['t']
                 if phase[i]=='unknown':phase[i]=m.get('phase','unknown')
                 model_ok[i]=bool(m.get('position_target',False))
                 if not model_ok[i]:reasons['model_has_no_position_target']+=1
@@ -201,6 +214,19 @@ def analyze(database, output, options=None):
                 ('actual_minus_command',q_actual-q_command,vc,q_command,q_actual),
                 ('command_minus_model',q_command-q_model,vcm,q_model,q_command)):
                 comparisons[label]=compare_block(label,err,mask,weights,span,t,ref,actual,gap,options)
+            if reference:
+                reference_available=reference_reason=='available'
+                vr=vm&np.isfinite(q_ref)&reference_available[:,None]
+                for label,target in [('actual_minus_reference',q_actual),('model_minus_reference',q_model),
+                                     ('command_minus_reference',q_command)]:
+                    comparisons[label]=compare_block(label,target-q_ref,vr&np.isfinite(target),weights,span,t,q_ref,target,gap,options)
+                reference_info.update(status='available' if vr.all(axis=1).any() else 'unavailable',
+                    valid_body29_frames=int(vr.all(axis=1).sum()),
+                    associated_reference_frames=int(reference_available.sum()),
+                    association_status_counts=dict(Counter(reference_reason.tolist())))
+                total_reference_frames+=reference_info['valid_body29_frames']
+                total_reference_inputs+=reference_info['associated_reference_frames']
+                reference_reasons.update(reference_info['association_status_counts'])
             segment=dict(id=sid,epoch=epoch,boundary=boundary,model_id=model_id,
                 model_hash=models[0].get('model_hash') if models else None,
                 adapter=models[0].get('adapter') if models else None,
@@ -213,20 +239,33 @@ def analyze(database, output, options=None):
                 enable_evidence='Explicit flags when present; otherwise positive command KP is only evidence of position-control intent. Reviewed ROS feedback has no hardware enable flag; unknown hardware enable is counted, not asserted.',
                 inference_events=len(models),feedback_events=n,reasons=dict(reasons),
                 lineage=dict(Counter(lineage.tolist())),comparisons=comparisons)
+            if reference:segment['sonic_reference']=reference_info
             result['segments'].append(segment);total_reasons.update(reasons)
             total_model_frames+=int(vm.all(axis=1).sum());total_command_frames+=int(vc.all(axis=1).sum())
             for key,a in dict(t=t,q_model=q_model,q_command=q_command,q_actual=q_actual,
                               valid_model=vm,valid_command=vc,command_age_s=cmd_age,model_age_s=model_age,phase=phase).items():
                 arrays[f's{sid}_{key}']=a
+            if reference:
+                for key,a in dict(q_ref=q_ref,valid_reference=vr,reference_age_s=reference_age,
+                                  reference_reason=reference_reason).items():arrays[f's{sid}_{key}']=a
             ix=np.unique(np.linspace(0,n-1,min(n,1600),dtype=int))
             charts.append(dict(id=sid,model=model_id,phase=segment['phase'],t=t[ix],
                                q_model=np.degrees(q_model[ix]),q_command=np.degrees(q_command[ix]),
                                q_actual=np.degrees(q_actual[ix]),valid_model=vm[ix],valid_command=vc[ix]))
+            if reference:charts[-1].update(q_ref=np.degrees(q_ref[ix]),valid_reference=vr[ix])
     db.close()
     result['summary']=dict(feedback_frames=total_feedback,model_valid_body29_frames=total_model_frames,
         command_valid_body29_frames=total_command_frames,reasons=dict(total_reasons),
         model_result='available' if total_model_frames else '模型输出未观测或无有效29维角度目标',
         command_result='available' if total_command_frames else '无有效29维指令跟踪样本')
+    if reference:
+        status=('available' if total_reference_frames==total_feedback else 'partial') if total_reference_frames else 'unavailable'
+        result['sonic_reference']=dict(reference.metadata,status=status,
+            inference_events=sum(reference.counts.values()),inference_status_counts=dict(reference.counts),
+            valid_body29_frames=total_reference_frames,associated_reference_frames=total_reference_inputs,
+            association_status_counts=dict(reference_reasons),decoder_errors=reference.errors)
+        result['summary'].update(reference_result=status,reference_valid_body29_frames=total_reference_frames)
+        reference.save(out/'sonic_reference.npz')
     capture=source.get('capture_result.json',{})
     issues={k:v for k,v in source['counts'].items() if v and
             any(k.startswith(p) for p in ('rejected:','invalid_','out_of_order','duplicate','model_sequence_missing','ros_clock','receive_clock','missing_joint'))}

@@ -60,3 +60,14 @@ ROS源时刻映射到主机单调轴：`t = received_monotonic - (ros_now_ns - s
 覆盖分两种：有效角度样本比例；各反馈点至下一点的时间支持（跨超过反馈gap的缺口给0，最后一点给0）。部位“完整覆盖时间”要求该部位所有关节都有效。分母是该段首末反馈时刻跨度，不代表整个记录器启动窗口；模型频率和反馈频率分别计算。
 
 滞后估计只在当前段内部、连续有效窗口使用因果采样保持搜索0到250ms（默认步长5ms）。至少100样本、至少2秒跨度、至少5°变化才估计；边界命中和不足原因明确报告。候选滞后用相同样本集合，补偿RMSE单列，不改原时间轴主误差。部位滞后为可估计关节滞后的中位数，列出参与数量；不是网络延迟或某条命令的电机响应时间。
+
+
+## 可选 SONIC 重建参考（0.2.0）
+
+SONIC STK1 导入额外保留同次推理的 `motion_token`、`sonic_source`、`sonic_policy_status`、`source_blend_active` 及参考帧/序号/接收时间；导入元数据 `sonic_trace_fields_version=1` 标记此能力。记录协议和记录回调未改变。旧SQLite仍可分析原有三组误差；参考模式发现缺token时明确要求从原始JSONL重新导入，不自动寻找机器人或重跑控制模型。
+
+`--sonic-reference` 只启用离线旁路。参考 `q_ref` 由同一个已关联模型事件的token解码，直接复用最终指令→模型的身份/因果关联、时钟分段、缺口隔离及反馈有效掩码。参考年龄 `reference_age_s` 是反馈时刻减对应推理完成时刻，包含模型到指令和指令到反馈两段时间；不是电机响应延迟。
+
+参考需 `sonic-stk1` 适配器、manifest允许的控制模型SHA、64维合法post-FSQ token、active/live/live_reference且无source blend。`--include-phases` 不取消这个参考专属条件。该规则只影响参考比较，不重新引入通用核心的SONIC状态白名单，也不阻止其他模型的指令/执行评分。
+
+每段 `sonic_reference.inference_status_counts` 按独立推理计数；`association_status_counts` 按反馈配对计数。只有后者满足原有反馈/使能证据/阶段等条件才计入 `valid_body29_frames`。报告同时保留这两种计数，缺项不填0误差。manifest或模型资产损坏报输入错误；不兼容策略/缺token/解码输出失败显示参考不可用并保留执行结果。

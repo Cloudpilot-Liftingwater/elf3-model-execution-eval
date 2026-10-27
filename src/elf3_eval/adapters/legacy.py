@@ -32,6 +32,12 @@ def convert(e, *, source_age_max=1.0):
                           inference_start=m['started_monotonic'], inference_end=m['completed_monotonic'],
                           adapter='sonic-stk1', stage='post_action_clip_scale_offset_pre_source_blend',
                           policy_target=a['policy_target'].tolist(),
+                          motion_token=a['motion_token'].tolist(),
+                          sonic_source=m.get('source'), sonic_policy_status=m.get('policy_status'),
+                          source_blend_active=m.get('source_blend_active'),
+                          reference_frame_index=m.get('reference_frame_index'),
+                          reference_sequence=m.get('reference_sequence'),
+                          reference_received_monotonic=m.get('reference_received_monotonic'),
                           tap_sent=m.get('tap_sent',0),
                           tap_dropped=m.get('tap_dropped', 0), tap_errors=m.get('tap_errors', 0))
         out.update(common)
