@@ -17,6 +17,10 @@ def convert(e, *, source_age_max=1.0):
                           v['position'], names=v['names'])
         out.update(common, source_stamp_ns=stamp, source_clock='ros', time_valid=valid,
                    source_age_s=age, kp=v.get('kp'), phase='unknown', enabled=None)
+        if k=='state' and any(field in v for field in ('motor_temperature','driver_temperature')):
+            out['temperature_names']=list(v['names'])
+            for field in ('motor_temperature','driver_temperature'):
+                if field in v:out[field]=v[field]
         return out
     if k == 'trace':
         m, a = decode(base64.b64decode(v['packet_b64'], validate=True))

@@ -1,0 +1,19 @@
+{
+  "id": "elf3-site-calibration-example",
+  "basis": "Engineering screening example; replace using healthy robot baselines, not an OEM specification",
+  "comparison": "actual_minus_model",
+  "minimum_span_s": 2.0,
+  "minimum_inference_events": 50,
+  "minimum_time_coverage": 0.95,
+  "limits_deg": {
+    "mae_deg": 3.0,
+    "rmse_deg": 5.0,
+    "p95_abs_deg": 10.0,
+    "bias_deg": 3.0,
+    "max_abs_deg": 20.0
+  },
+  "joint_overrides": {},
+  "sources": [
+    "https://control.ros.org/humble/doc/ros2_controllers/joint_trajectory_controller/doc/parameters.html"
+  ]
+}

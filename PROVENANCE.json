@@ -31,5 +31,24 @@
     "bxi_example_py_elf3/bxi_example_demo.py": "d59314b54339dfea78f6f3e9320126bf1b5791c4ba9da7dda7c03720e0a607a8"
   },
   "test_excerpt": "tests/fixtures/normal_step.py.txt: exact NormalMotionPolicyMjlab.step source for independent conversion parity checks",
-  "sonic_reference_extension": "No recording/control changes. Explicit external ONNX+manifest bundle; matching policy hashes required. Generic pairing, thresholds and original three comparisons retained."
+  "sonic_reference_extension": "No recording/control changes. Explicit external ONNX+manifest bundle; matching policy hashes required. Generic pairing, thresholds and original three comparisons retained.",
+  "manual_execution_v040": {
+    "date": "2026-10-29",
+    "thermal_policy": "Original robot_test com.bxi.suspended_tests temperature_fault and motor model configuration; no new motor thermal thresholds",
+    "screening_profile": "elf3-dynamic-screening-v1; provisional engineering values, not ISO/OEM acceptance limits; per-joint overrides supported",
+    "references": [
+      "https://control.ros.org/humble/doc/ros2_controllers/joint_trajectory_controller/doc/parameters.html",
+      "https://www.iso.org/standard/22244.html",
+      "https://www.nist.gov/publications/measuring-and-representing-performance-manufacturing-assembly-robots"
+    ],
+    "scope": "Manual model start/return in task controller checkout, passive temperature and structured diagnostics, offline precision screening; hardware installation and field acceptance not performed"
+  },
+  "dance_extension": {
+    "repository": "https://github.com/bxirobotics/bxi_controller_ros2",
+    "branch": "robot_test",
+    "base_commit": "e1d412f8efbe932ae82481385341ea5d52ac88e7",
+    "contract": "Observe exact existing DanceMotionPolicy output.joints.position after real decoding; do not reimplement model conversion",
+    "validation_scope": "Generated ONNX/NPZ, existing MJLab decoder, real state machine, final publish method with substituted transport and known-error evaluator; no genuine dance asset or field acceptance claim",
+    "analysis_change": "Retain full-record test_event markers separately from precision metrics; original error calculations unchanged"
+  }
 }

@@ -3,6 +3,7 @@ from collections import Counter
 import base64
 import gzip
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -58,19 +59,28 @@ class AsyncWriter:
         self.thread.join(timeout=max(0,deadline-time.monotonic()))
         if self.thread.is_alive():self.errors.append('writer shutdown timeout; capture incomplete')
 
+def recording_deadline(started, seconds):
+    if not math.isfinite(seconds) or not 0<=seconds<=86400:
+        raise ValueError('seconds must be in [0,86400]; 0 records until stopped')
+    return None if seconds==0 else started+seconds
+
+
 def record(output,seconds=60,address='elf3_model_eval_v1',socket_only=False,
            legacy_sonic=False,state_topic='/hardware/actuator_states',
-           command_topic='/hardware/actuators_cmds',mode_topic='/hardware/state_machine_info'):
-    if not 0<seconds<=86400:raise ValueError('seconds must be in (0,86400]')
+           command_topic='/hardware/actuators_cmds',mode_topic='/hardware/state_machine_info',robot_id=None):
+    recording_deadline(0,seconds)
     out=Path(output);out.mkdir(parents=True,exist_ok=True)
     if any(out.iterdir()):raise FileExistsError('recording directory must be empty')
     sockets=[];node=None;rclpy=None;writer=None
     started=time.monotonic(); stop=threading.Event(); old_signals={};callback_errors=Counter()
-    dump(out/'metadata.json',dict(schema=1,hostname=socket.gethostname(),
+    deadline=recording_deadline(started,seconds)
+    dump(out/'metadata.json',dict(schema=1,hostname=socket.gethostname(),robot_id=robot_id,
+        execution_suite_mode=os.environ.get('BXI_EXECUTION_SUITE_MODE'),
         boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
         started_monotonic=started,started_wall_ns=time.time_ns(),hardware_commands_sent=0,
         topics=dict(state=state_topic,command=command_topic,mode=mode_topic),
-        socket_only=socket_only,legacy_sonic=legacy_sonic,queue_capacity=4096))
+        socket_only=socket_only,legacy_sonic=legacy_sonic,queue_capacity=4096,
+        requested_duration_s=seconds,until_stopped=deadline is None))
     try:
         for name,legacy in [(address,False)]+([('elf3_sonic_tracking_v1',True)] if legacy_sonic else []):
             s=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM)
@@ -95,6 +105,9 @@ def record(output,seconds=60,address='elf3_model_eval_v1',socket_only=False,
                            position=list(msg.pos if is_cmd else msg.position),
                            velocity=list(msg.vel if is_cmd else msg.velocity))
                     for field in (('kp','kd','torque') if is_cmd else ('effort',)):v[field]=list(getattr(msg,field))
+                    if not is_cmd:
+                        for field in ('motor_temperature','driver_temperature'):
+                            v[field]=list(getattr(msg,field,()))
                     writer.submit(dict(kind=kind,received_monotonic=rx,received_wall_ns=wall,
                                        ros_now_ns=ros_now,value=v))
                 except Exception as exc:callback_errors[type(exc).__name__]+=1
@@ -107,7 +120,7 @@ def record(output,seconds=60,address='elf3_model_eval_v1',socket_only=False,
             node.create_subscription(String,mode_topic,mode,qos)
         for sig in (signal.SIGINT,signal.SIGTERM):
             old_signals[sig]=signal.signal(sig,lambda *_:stop.set())
-        while not stop.is_set() and time.monotonic()-started<seconds and not writer.errors:
+        while not stop.is_set() and (deadline is None or time.monotonic()<deadline) and not writer.errors:
             if node:rclpy.spin_once(node,timeout_sec=.001)
             else:stop.wait(.001)
             for s,legacy in sockets:
@@ -124,6 +137,9 @@ def record(output,seconds=60,address='elf3_model_eval_v1',socket_only=False,
         if rclpy and rclpy.ok():rclpy.shutdown()
         for sig,handler in old_signals.items():signal.signal(sig,handler)
         capture=dict(hardware_commands_sent=0,elapsed_s=time.monotonic()-started,
+            requested_duration_s=seconds,
+            stop_reason=('setup_failed' if writer is None else 'writer_error' if writer.errors else
+                         'signal' if stop.is_set() else 'duration_reached'),
             accepted=dict(writer.accepted) if writer else {},queue_lost=dict(writer.dropped) if writer else {},
             written=writer.written if writer else 0,writer_errors=writer.errors if writer else ['setup failed'],
             callback_errors=dict(callback_errors),enable_state='only observed; no enable command sent')

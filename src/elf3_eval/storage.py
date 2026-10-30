@@ -118,6 +118,7 @@ def import_recording(source, output, *, source_age_max=1., clock_jump=.02):
     return meta
 
 def load_epoch(db, epoch):
+    temperature_layouts={}
     for (data,) in db.execute('SELECT data FROM events WHERE epoch=? ORDER BY t,id', (epoch,)):
         e=json.loads(zlib.decompress(data))
         if e['kind'] in ('model','command','actual'):
@@ -126,4 +127,9 @@ def load_epoch(db, epoch):
             e['q']=vector(e['q'],e['names'])
             if e.get('kp') is not None:e['kp']=vector(e['kp'],e['names'])
             e['names']=BODY
+            if 'temperature_names' in e:
+                names=tuple(e['temperature_names'])
+                e['temperature_names']=temperature_layouts.setdefault(names,names)
+                for field in ('motor_temperature','driver_temperature'):
+                    if field in e:e[field]=np.asarray(e[field],dtype=float)
         yield e

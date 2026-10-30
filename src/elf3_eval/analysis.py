@@ -21,6 +21,7 @@ class Options:
     start: float | None = None
     end: float | None = None
     sonic_reference: str | None = None
+    acceptance_profile: str | None = None
 
 def timing(rows):
     t = np.array([r['t'] for r in rows if r.get('time_valid',True)])
@@ -106,8 +107,13 @@ def analyze(database, output, options=None):
         accuracy_acceptance='not_assessed_no_user_threshold',options=asdict(options),source=source,segments=[])
     charts=[]; arrays={}; total_reasons=Counter(); total_feedback=0; total_model_frames=0; total_command_frames=0
     total_reference_frames=0; total_reference_inputs=0; reference_reasons=Counter()
+    result['test_events']=[]
+    from .diagnostics import TemperatureSummary, summarize_events
+    temperatures=TemperatureSummary()
     for epoch, in db.execute('SELECT DISTINCT epoch FROM events ORDER BY epoch'):
         events=list(load_epoch(db,epoch))
+        for event in events:temperatures.add(event)
+        result['test_events'].extend(e for e in events if e['kind']=='test_event')
         links={e['source_stamp_ns']:e for e in events if e['kind']=='command_link'}
         for e in events:
             if e['kind']=='command' and e.get('source_stamp_ns') in links:
@@ -238,6 +244,8 @@ def analyze(database, output, options=None):
                     basis='Explicit CLI values, otherwise 3× median command/model interval and 5× median feedback interval per clock epoch; heuristic freshness only'),
                 enable_evidence='Explicit flags when present; otherwise positive command KP is only evidence of position-control intent. Reviewed ROS feedback has no hardware enable flag; unknown hardware enable is counted, not asserted.',
                 inference_events=len(models),feedback_events=n,reasons=dict(reasons),
+                independent_inference_events=len({(m.get('session'),m.get('model_id'),m.get('model_hash'),m.get('seq'))
+                    for m in usable_models if m.get('position_target') and m.get('phase')=='active'}),
                 lineage=dict(Counter(lineage.tolist())),comparisons=comparisons)
             if reference:segment['sonic_reference']=reference_info
             result['segments'].append(segment);total_reasons.update(reasons)
@@ -267,11 +275,27 @@ def analyze(database, output, options=None):
         result['summary'].update(reference_result=status,reference_valid_body29_frames=total_reference_frames)
         reference.save(out/'sonic_reference.npz')
     capture=source.get('capture_result.json',{})
+    result['temperatures']=temperatures.report(source)
+    result['diagnostics']=summarize_events(result['test_events'])
     issues={k:v for k,v in source['counts'].items() if v and
             any(k.startswith(p) for p in ('rejected:','invalid_','out_of_order','duplicate','model_sequence_missing','ros_clock','receive_clock','missing_joint'))}
     result['data_integrity']=dict(import_issues=issues,recorder=capture,
         complete_body29_model_coverage=bool(total_feedback and total_model_frames==total_feedback),
         note='Coverage and data integrity are separate from control accuracy; missing samples are never zero errors. ROS source time is mapped to host monotonic time, not motor execution time.')
+    if options.acceptance_profile is not None:
+        from .acceptance import PROFILE, assess
+        profile=(PROFILE if options.acceptance_profile==PROFILE['id']
+                 else json.loads(Path(options.acceptance_profile).read_text()))
+        result['acceptance']=assess(result,profile)
+        result['accuracy_acceptance']=result['acceptance']['status']
+        result['summary']['accuracy_screening']=result['acceptance']['status']
+        result['diagnostics']['precision_exceedances']=[
+            dict(code='TRACKING_SCREENING_EXCEEDED',category='tracking',severity='error',
+                 origin='offline_analysis',automatic_control_action='none',
+                 segment=segment['segment'],model_id=segment['model_id'],joint=name,
+                 comparison=profile['comparison'],violations=joint['violations'])
+            for segment in result['acceptance']['segments'] if segment['status']=='screening_fail'
+            for name,joint in segment['joints'].items() if joint['violations']]
     dump(out/'report.json',result)
     np.savez_compressed(out/'aligned.npz',**arrays)
     from .report import render
